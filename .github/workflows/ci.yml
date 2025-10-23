@@ -1,0 +1,58 @@
+# .github/workflows/ci.yml
+name: CI Checks
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # Install only CI dependencies plus core libs needed for type/lint
+        pip install -r requirements.txt
+    
+    - name: Run Black formatter check
+      run: black --check .
+      
+    - name: Run Ruff linter and code quality checks
+      run: ruff check .
+      
+    - name: Run MyPy static type check
+      # Only run if you have added type hints extensively
+      run: mypy .
+      
+    - name: Run Pytest unit tests (if applicable)
+      # Assuming a tests/ directory exists
+      run: pytest -q
+      
+    - name: Guardrail Check: Prevent Local File Writes
+      id: local_write_guardrail
+      # Searches for `open(` with write modes 'w', 'a', 'x', 'r+' in .py files
+      # The grep -v pipe is a crude mechanism to exempt files like NamedTemporaryFile 
+      # or known safe patterns, but manual review is still required.
+      run: |
+        set +e # Don't exit on grep failure (non-zero status)
+        SUSPICIOUS_FILES=$(grep -rE '\bopen\(.+["\'](w|a|x|r\+?)["\']\)' . --include='*.py' | grep -v 'NamedTemporaryFile')
+        set -e # Re-enable error on failure
+        
+        if [ ! -z "$SUSPICIOUS_FILES" ]; then
+          echo "::error file=CI::Local file write pattern detected! Violates 'No-Local-Machine' policy."
+          echo "The following code lines appear to open a file for writing (modes w, a, x, r+):"
+          echo "$SUSPICIOUS_FILES"
+          exit 1
+        else
+          echo "No local file write patterns detected. Guardrail passed."
+        fi
